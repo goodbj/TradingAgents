@@ -8,6 +8,29 @@ services:
     tty: true
     stdin_open: true
 
+  # TA 脑服务（02-TA ↔ 01-Digger 对插）：HTTP API 提供币种数据源
+  # 启动: docker compose --profile brain up --build -d
+  ta-brain:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - TA_BRAIN_PORT=8000
+      - TRADINGAGENTS_NO_UPDATE_CHECK=1
+    # 注意:不能用 sh api/run_brain.sh —— Dockerfile ENTRYPOINT 是 ["tradingagents"],
+    # 拼出来成 tradingagents sh ...，CLI 不认 sh 子命令。直接起 python -m api.server。
+    # 覆盖 Dockerfile 的 ENTRYPOINT ["tradingagents"],否则拼成 tradingagents python ... CLI 不认
+    entrypoint: [""]
+    command: ["python", "-m", "api.server"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${TRADINGAGENTS_DATA_DIR:-tradingagents_data}:/home/appuser/.tradingagents
+      # 开发期挂 api/ 进去，改代码免 rebuild
+      - ./api:/home/appuser/app/api
+    profiles:
+      - brain
+
   ollama:
     image: ollama/ollama:latest
     volumes:
