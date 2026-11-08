@@ -105,14 +105,15 @@ GET /api/v1/tasks/{task_id}
 GET /v1/klines/last?symbol=BTCUSDT&timeframe=1h&limit=200
 ```
 - `symbol`：Binance 口径（如 `BTCUSDT`），映射见 §3.4
-- `timeframe` 枚举冻结：`1m` / `15m` / `1h` / `1d`
-- `limit`：1~1000
+- `timeframe`：TA 侧冻结只用 `1m` / `15m` / `1h` / `1d` 四种（klinefeed 全集 11 种：1m/3m/5m/15m/30m/1h/2h/4h/6h/12h/1d，TA 不用的不进契约）
+- `limit`：**默认 120**，服务端未设硬上限（建议 ≤1000）；可选 `include_forming=true` 含未收盘 bar
 - 响应：`{"klines":[{"openTime","open","high","low","close","volume","closeTime"}],"symbol","timeframe"}`（价格 float，时间 ms epoch）
 
 ### 3.2 拉历史区间
 ```
-GET /v1/klines/range?symbol=...&timeframe=...&start_ms=...&end_ms=...
+GET /v1/klines/range?symbol=...&timeframe=...&start=...&end=...
 ```
+- `start` / `end`：**unix 毫秒时间戳**（参数名就是 `start`/`end`，无 `_ms` 后缀；`end ≥ start` 否则 400）
 
 ### 3.3 标的/周期清单（脑侧自检用）
 ```
