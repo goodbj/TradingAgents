@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -178,8 +179,19 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
     }
 
 
+# 脑 propagate 整体超时（秒）：满链路十几轮串行 LLM 调用，若后端代理卡死
+# 会无限挂起，导致 01 侧轮询永远拿不到 done。给一个上限，超时即标记 failed
+# 并写明原因，让 01 侧能拿到明确失败而非永远 processing（兜底，根因在代理侧）。
+PROPAGATE_TIMEOUT_SECONDS = float(os.getenv("TA_BRAIN_PROPAGATE_TIMEOUT", "600"))
+
+
 def _run_task(task_id: str, request: IngestRequest) -> None:
-    """后台线程跑脑判断，结果落 _TASKS。"""
+    """后台线程跑脑判断，结果落 _TASKS。
+
+    用 ThreadPoolExecutor 包裹 propagate 并设整体超时：超时即标记 failed，
+    写明原因，防止后端代理卡死导致任务永远 processing（#130 step7 联调实测
+    300s 强杀仍无 done，指向集团代理 3425 对长链路限流/卡死）。
+    """
     try:
         with _TASKS_LOCK:
             _TASKS[task_id]["status"] = "processing"
@@ -189,12 +201,27 @@ def _run_task(task_id: str, request: IngestRequest) -> None:
         if request.portfolio:
             portfolio = PortfolioContext.model_validate(request.portfolio)
 
-        final_state, _rating = brain.propagate(
-            request.symbol,
-            request.trade_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            asset_type=request.asset_type,
-            portfolio=portfolio,
-        )
+        trade_date = request.trade_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        def _propagate():
+            return brain.propagate(
+                request.symbol,
+                trade_date,
+                asset_type=request.asset_type,
+                portfolio=portfolio,
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(_propagate)
+            try:
+                final_state, _rating = future.result(timeout=PROPAGATE_TIMEOUT_SECONDS)
+            except TimeoutError:
+                future.cancel()
+                raise TimeoutError(
+                    f"propagate exceeded {PROPAGATE_TIMEOUT_SECONDS:.0f}s (backend LLM "
+                    f"proxy likely stalled/rate-limited); task aborted to avoid "
+                    f"permanent processing. Check the LLM proxy and retry."
+                )
 
         data_source = _build_data_source(final_state, request, task_id)
 
