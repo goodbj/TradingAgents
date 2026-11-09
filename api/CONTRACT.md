@@ -88,6 +88,8 @@ GET /api/v1/tasks/{task_id}
 }
 ```
 
+> **注**：`momentum`/`sentiment`/`fundamental` 维度当前为启发式估算（基于 report 长度），仅供参考；`overall` 为报告填充率。若脑侧后续实现真实评分逻辑，将以脑侧输出为准。
+
 ## 3. 数据源接口（02 脑调用，01 提供）【2026-11-08 增补，裁决1 授权】
 
 > 02 脑从 01 的 klinefeed 取 K 线，替代 Yahoo Finance（治 Yahoo 限流 + Digger 数据失真根因）。
