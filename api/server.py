@@ -110,15 +110,39 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
     filled = [1 for v in reports.values() if v.strip()]
     overall = round(sum(filled) / max(len(reports), 1), 2)
 
-    # recommendation 只给 watch 倾向，不给 buy/sell
-    final_decision = _txt(final_state.get("final_trade_decision"))
-    decision_lower = final_decision.lower()
-    if "sell" in decision_lower or "underweight" in decision_lower:
-        recommendation = "avoid"
-    elif "buy" in decision_lower or "overweight" in decision_lower:
-        recommendation = "strong_watch"
+    # recommendation：优先读脑侧枚举值，降级才用关键词
+    recommendation_enum = final_state.get("recommendation_enum")
+    if recommendation_enum in ("strong_watch", "watch", "avoid"):
+        recommendation = recommendation_enum
     else:
-        recommendation = "watch"
+        # 降级：从 final_trade_decision 文案里猜
+        final_decision = _txt(final_state.get("final_trade_decision"))
+        decision_lower = final_decision.lower()
+        if "sell" in decision_lower or "underweight" in decision_lower:
+            recommendation = "avoid"
+        elif "buy" in decision_lower or "overweight" in decision_lower:
+            recommendation = "strong_watch"
+        else:
+            recommendation = "watch"
+
+    # scores 区分度：从各 report 长度粗算置信度（0-1），没填就 0.5
+    def _confidence(text: str) -> float:
+        if not text.strip():
+            return 0.5
+        # 长度越长，置信度越高（简单启发式）
+        base = min(len(text) / 500, 1.0)
+        return round(0.3 + base * 0.7, 2)
+
+    scores = {
+        "overall": overall,
+        "momentum": _confidence(reports["market"]),
+        "sentiment": _confidence(reports["sentiment"]),
+        "fundamental": _confidence(reports["fundamentals"]),
+        "risk_level": "medium",
+    }
+
+    # point_in_time_checked：读脑侧校验结果，默认 False
+    pit_valid = final_state.get("pit_valid", False)
 
     return {
         "request_id": request.request_id,
@@ -126,7 +150,7 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
         "symbol": request.symbol,
         "analysis_date": request.trade_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "source": "tradingagents_v0.7.1",
-        "point_in_time_checked": True,
+        "point_in_time_checked": pit_valid,
         "reports": reports,
         "debate": {
             "bull": _txt(debate.get("bull_history")),
@@ -135,13 +159,7 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
             "risk_aggressive": _txt(risk.get("aggressive_history")),
             "risk_neutral": _txt(risk.get("neutral_history")),
         },
-        "scores": {
-            "overall": overall,
-            "momentum": overall,
-            "sentiment": overall,
-            "fundamental": overall,
-            "risk_level": "medium",
-        },
+        "scores": scores,
         "recommendation": recommendation,
         "final_rating": _txt(final_state.get("final_rating")),
         "rationale": _txt(final_state.get("investment_plan") or final_decision),
