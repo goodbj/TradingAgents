@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from tradingagents.dataflows.vendors.klinefeed import get_last_source
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.portfolio import PortfolioContext
@@ -87,6 +88,17 @@ class IngestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # 脑判断：把 propagate() 的 final_state 整理成契约 JSON
 # ---------------------------------------------------------------------------
+def _data_source_tag() -> str:
+    """标注脑这轮判断用的真实 K 线数据源（契约 §3.5，排障不蒙人）。
+
+    从 klinefeed vendor 取它实际命中哪一级（klinefeed / binance_direct /
+    yahoo_fallback），拼接进 source 字段；取不到就回退版本号。
+    """
+    tier = get_last_source()
+    base = "tradingagents_v0.7.1"
+    if tier:
+        return f"{base}:{tier}"
+    return base
 def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task_id: str) -> dict[str, Any]:
     """把 TradingAgents 的 final_state 整理成契约的「币种数据源」。"""
 
@@ -149,7 +161,7 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
         "task_id": task_id,
         "symbol": request.symbol,
         "analysis_date": request.trade_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "source": "tradingagents_v0.7.1",
+        "source": _data_source_tag(),
         "point_in_time_checked": pit_valid,
         "reports": reports,
         "debate": {

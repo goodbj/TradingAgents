@@ -43,11 +43,14 @@ bedrock = [
 ]
 # TA 脑服务 (02-TA ↔ 01-Digger) 运行时依赖。核心 CLI 不需要 FastAPI,
 # 故放 optional 段: pip install "tradingagents[brain]" 才带。
+# langchain 主包是 propagate() 跑 langgraph 节点的硬依赖（仅 langchain-core
+# 不够，#130 step7 联调实测 ModuleNotFoundError）；brain 段一并带上。
 brain = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "pydantic>=2.9",
     "requests>=2.32.4",
+    "langchain>=0.3.0",
 ]
 
 [project.scripts]

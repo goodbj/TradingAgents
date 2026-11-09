@@ -156,7 +156,11 @@ def build_default_config() -> dict:
         # routed to vendors you didn't choose. For ordered fallback, list several,
         # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
         "data_vendors": {
-            "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
+            # Options: alpha_vantage, yfinance, klinefeed. klinefeed is the
+            # 01-Digger K-line service (Binance USDT-M perpetuals), the brain's
+            # primary crypto source per CONTRACT.md §3; it falls back internally
+            # to Binance direct then Yahoo (#6/#7/#9). Equities still need yahoo.
+            "core_stock_apis": "klinefeed,yfinance",  # crypto via klinefeed, equities via yahoo
             "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
             # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
         # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
