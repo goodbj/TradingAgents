@@ -145,6 +145,14 @@ GET /v1/meta
 - `risk_level`：`low` / `medium` / `high`
 - `asset_type`：`crypto` / `stock`
 
+## 时区冻结（UTC 为唯一真值源）
+
+> 02 脑容器默认 UTC；01 客户端若传本地时区日期会触发"trade_date cannot be in the future"导致全天前 8h 必降级（#130 step7 联调实测）。两边强制 UTC：
+
+- **`trade_date` 一律传 UTC 日期**（YYYY-MM-DD）：01 客户端 `time.Now().UTC().Format("2006-01-02")`，02 侧 `get_current_date()` / server 默认 trade_date 均用 `datetime.now(timezone.utc)`。
+- 脑侧校验 `trade_date ≤ get_current_date()`（UTC today），传 UTC 保证 `date ≤ today`，无论容器/调用方时区如何都过。
+- 02 脑容器如设非 UTC 时区，须同步改 `date_window.get_current_date()` 保持 UTC，否则口径再打架。
+
 ## 健康检查
 ```
 GET /healthz  →  {"status":"ok"}

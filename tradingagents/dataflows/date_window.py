@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 
 def to_utc(dt: datetime) -> datetime:
@@ -33,8 +33,17 @@ def in_window(pub_dt: datetime | None, start_dt: datetime, end_dt: datetime) -> 
 
 
 def get_current_date() -> str:
-    """Today's date, YYYY-MM-DD."""
-    return date.today().strftime("%Y-%m-%d")
+    """Today's date, YYYY-MM-DD, in UTC.
+
+    UTC is the single source of truth for the run date so a brain process in any
+    container timezone (the 02 brain container defaults to UTC) and an upstream
+    caller passing a UTC date agree. A caller that passes a non-UTC (e.g. UTC+8
+    Beijing) date would otherwise be rejected as "in the future" for the first
+    8 hours of each Beijing day (#130 step7 联调实测: 01 传北京时间 11-10 被 UTC
+    脑判 future，全天前 8h 必降级)。 Server-side defaults in api/server.py also
+    use ``datetime.now(timezone.utc)``, so this keeps both lines on UTC.
+    """
+    return datetime.now(UTC).date().strftime("%Y-%m-%d")
 
 
 def is_historical(run_date) -> bool:
