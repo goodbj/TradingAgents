@@ -41,6 +41,14 @@ dev = [
 bedrock = [
     "langchain-aws>=1.7.9",
 ]
+# TA 脑服务 (02-TA ↔ 01-Digger) 运行时依赖。核心 CLI 不需要 FastAPI,
+# 故放 optional 段: pip install "tradingagents[brain]" 才带。
+brain = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.9",
+    "requests>=2.32.4",
+]
 
 [project.scripts]
 tradingagents = "cli.main:app"
