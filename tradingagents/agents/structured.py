@@ -24,6 +24,8 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from tradingagents.dataflows.config import get_config
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -44,7 +46,18 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Any | None:
 
     Logs a warning when the binding fails so the user understands the agent
     will use free-text generation for every call instead of one-shot fallback.
+
+    Honors the ``structured_output_enabled`` config switch: when False, the
+    binding is skipped entirely (same effect as an unsupported provider) so a
+    gateway that rejects the compiled tool-binding shape with a stable 503 can
+    be routed around without touching agent code (#130).
     """
+    if not get_config().get("structured_output_enabled", True):
+        logger.warning(
+            "%s: structured_output_enabled=False; using free-text generation",
+            agent_name,
+        )
+        return None
     try:
         return llm.with_structured_output(schema)
     except (NotImplementedError, AttributeError) as exc:

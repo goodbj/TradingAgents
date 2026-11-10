@@ -68,6 +68,12 @@ def _get_brain() -> TradingAgentsGraph:
             # propagate。SDK 自带 max_retries 对 429 生效，拉高预算扛突发限流；
             # 5xx 间歇性失败由上游(03代理)保证，脑侧只加预算不改协议。
             config["llm_max_retries"] = 4
+            # 集团代理对 structured-output 编译出的 tool-binding 形状（长多轮
+            # 上下文 + tool_choice 强制）稳定 503，而纯文本/tools 单发都 200
+            # （#130 终验四连败同节点同形状 23s 毙）。关掉结构化输出，全走
+            # free-text——本框架每个结构化调用都自带 free-text fallback，结果
+            # 照常渲染，只是少一层类型校验。
+            config["structured_output_enabled"] = False
             _BRAIN = TradingAgentsGraph(debug=False, config=config)
         return _BRAIN
 
