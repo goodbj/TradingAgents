@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from tradingagents.dataflows.vendors.klinefeed import get_last_source
+from tradingagents.dataflows.vendors.klinefeed.indicators import compute_momentum_score
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.portfolio import PortfolioContext
@@ -148,19 +149,22 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
         else:
             recommendation = "watch"
 
-    # scores 区分度：从各 report 长度粗算置信度（0-1），没填就 0.5
-    def _confidence(text: str) -> float:
-        if not text.strip():
-            return 0.5
-        # 长度越长，置信度越高（简单启发式）
-        base = min(len(text) / 500, 1.0)
-        return round(0.3 + base * 0.7, 2)
+    # scores 区分度：
+    # - momentum：真实指标（klinefeed OHLCV 算 RSI + 近期动量），不再数报告长度
+    #   （#238 第3件）。取不到真实数据时为 None —— 不在契约里塞假信。
+    # - sentiment / fundamental：这两维依赖 LLM 研判质量，框架当前无独立量化器；
+    #   用"报告是否实质产出"给 0/1 占位标记，NOT 数长度造出虚假 0.5 区分度。
+    #   后续接真实情绪/基本面量化器再替换（CONTRACT §2 已预留）。
+    momentum = compute_momentum_score(request.symbol, request.trade_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+
+    def _filled(text: str) -> int:
+        return 1 if text.strip() else 0
 
     scores = {
         "overall": overall,
-        "momentum": _confidence(reports["market"]),
-        "sentiment": _confidence(reports["sentiment"]),
-        "fundamental": _confidence(reports["fundamentals"]),
+        "momentum": momentum,  # 真实指标；None = 无可用 K 线（诚实空缺）
+        "sentiment": _filled(reports["sentiment"]),  # 1/0 占位：报告是否实质产出
+        "fundamental": _filled(reports["fundamentals"]),  # 1/0 占位
         "risk_level": "medium",
     }
 
