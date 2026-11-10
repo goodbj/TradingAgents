@@ -228,16 +228,63 @@ def _run_task(task_id: str, request: IngestRequest) -> None:
         with _TASKS_LOCK:
             _TASKS[task_id].update({"status": "done", "data_source": data_source, "finished_at": _now()})
 
-        # 可选：主动回调 01 接收接口
+        # 可选：主动回调 01 接收接口（契约 §1 异步模式：外层包 task 元信息，
+        # 头带 X-TA-Token 防伪造，3 次指数退避 2s/4s/8s；失败不阻塞 done）
         if request.callback_url:
-            try:
-                requests.post(request.callback_url, json=data_source, timeout=30)
-            except requests.RequestException as exc:
-                with _TASKS_LOCK:
-                    _TASKS[task_id]["callback_error"] = str(exc)
+            _notify_callback(task_id, request, data_source)
     except Exception as exc:
         with _TASKS_LOCK:
             _TASKS[task_id].update({"status": "failed", "error": str(exc), "finished_at": _now()})
+        # 失败也回调 01（带 status=failed + error），让 01 侧能立即感知并降级，
+        # 而不是轮询到超时才发现；失败回调同样带 token 与退避重试。
+        if request.callback_url:
+            _notify_callback(task_id, request, None, error=str(exc))
+
+
+def _notify_callback(
+    task_id: str,
+    request: IngestRequest,
+    data_source: dict[str, Any] | None,
+    error: str | None = None,
+) -> None:
+    """按契约（2026-11-10 与 01_00 商定）回调 01 的接收端点。
+
+    外层结构：{task_id, request_id, status, finished_at, data_source}；
+    失败时 status=failed 且带 error、无 data_source。请求头 X-TA-Token
+    取环境变量 TA_BRAIN_CALLBACK_TOKEN（两边约定同一值；未设置则不发，
+    01 侧"不带 token 不拒绝"）。重试 3 次指数退避 2s/4s/8s，全部失败只
+    写 callback_error，不阻塞任务状态（done 已落）。
+    """
+    payload = {
+        "task_id": task_id,
+        "request_id": request.request_id,
+        "status": "failed" if error else "done",
+        "finished_at": _now(),
+    }
+    if error:
+        payload["error"] = error
+    else:
+        payload["data_source"] = data_source
+
+    headers = {}
+    token = os.getenv("TA_BRAIN_CALLBACK_TOKEN")
+    if token:
+        headers["X-TA-Token"] = token
+
+    for attempt, delay in enumerate((0, 2, 4, 8)):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = requests.post(request.callback_url, json=payload, headers=headers, timeout=30)
+            if resp.status_code < 500:
+                return  # 4xx 或 2xx 都不再重试（重试只救 5xx/网络错误）
+        except requests.RequestException:
+            pass  # 网络错误继续退避重试
+    with _TASKS_LOCK:
+        _TASKS[task_id]["callback_error"] = (
+            f"callback to {request.callback_url} failed after 3 retries "
+            f"(attempts at 0s/2s/4s/8s backoff)"
+        )
 
 
 def _now() -> str:
