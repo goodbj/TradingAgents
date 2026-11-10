@@ -64,6 +64,10 @@ def _get_brain() -> TradingAgentsGraph:
             config["quick_think_backend_url"] = "http://127.0.0.1:3425"
             # 代理要求的 key（网关认这个）
             os.environ.setdefault("ANTHROPIC_API_KEY", "sk-magpie-key-2f4310a2456eb2bb8aa4808875adc95a401488f116164d94")
+            # 满链路十几轮串行 LLM，集团代理(3425)偶发 503/429 会一击毙命整个
+            # propagate。SDK 自带 max_retries 对 429 生效，拉高预算扛突发限流；
+            # 5xx 间歇性失败由上游(03代理)保证，脑侧只加预算不改协议。
+            config["llm_max_retries"] = 4
             _BRAIN = TradingAgentsGraph(debug=False, config=config)
         return _BRAIN
 
