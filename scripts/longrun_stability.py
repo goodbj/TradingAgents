@@ -24,7 +24,8 @@ import requests
 TA_BRAIN_URL = "http://127.0.0.1:8011"
 SYMBOLS = ["BTC-USD", "ETH-USD"]  # 真行情 symbol
 ITERATIONS = 20  # 每个symbol跑几次（可根据时间调整）
-OUTPUT_DIR = Path("E:/AI/AI_Memory/projects/02-TA-金融交易框架/知识库")
+# 报告落本 worktree，不直写 AI_Memory 主树（避免与 00_01 未提交改动冲突，也便于提交前审阅）
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "reports"
 OUTPUT_FILE = OUTPUT_DIR / "ta_brain_longrun_report.md"
 
 
@@ -63,6 +64,8 @@ def _run_one(symbol: str, iteration: int) -> dict[str, Any]:
             status = task_data["status"]
             if status in ("done", "failed"):
                 duration = time.time() - start
+                ds = task_data.get("data_source") or {}
+                scores = ds.get("scores") or {}
                 return {
                     "symbol": symbol,
                     "iteration": iteration,
@@ -70,7 +73,10 @@ def _run_one(symbol: str, iteration: int) -> dict[str, Any]:
                     "duration_seconds": round(duration, 2),
                     "task_id": task_id,
                     "error": task_data.get("error"),
-                    "data_source": task_data.get("data_source"),
+                    "data_source": ds,
+                    # 第3件：长跑顺带验证真实 momentum 评分是否落地
+                    "momentum_score": scores.get("momentum"),
+                    "recommendation": ds.get("recommendation"),
                 }
         # 超时
         duration = time.time() - start
@@ -169,6 +175,19 @@ def _generate_report(results: list[dict[str, Any]]) -> str:
         report_lines.append(f"- 平均耗时: {sym_avg}s")
         report_lines.append("")
 
+    report_lines.append("")
+    report_lines.append("## 真实评分落地（第3件 momentum 验证）")
+    report_lines.append("")
+    momentum_vals = [r.get("momentum_score") for r in results if r.get("momentum_score") is not None]
+    if momentum_vals:
+        report_lines.append(f"- 有真实 momentum 评分的轮次: {len(momentum_vals)}/{total}")
+        report_lines.append(f"- momentum 均值: {round(statistics.mean(momentum_vals), 3)}")
+        report_lines.append(f"- momentum 范围: [{min(momentum_vals)}, {max(momentum_vals)}]")
+        report_lines.append("- 说明：momentum 来自 klinefeed 真实 OHLCV（RSI + 近期动量），None 表示该轮取不到 K 线（诚实空缺，非 0.5 假信）")
+    else:
+        report_lines.append("- 全部轮次 momentum 为 None（需排查 klinefeed 数据链）")
+
+    report_lines.append("")
     report_lines.append("## 原始数据")
     report_lines.append("")
     report_lines.append("```json")

@@ -72,18 +72,32 @@ def yf_retry(func, max_retries=3, base_delay=2.0):
     an empty answer. ``func`` should build its own Ticker and make the request
     itself: a Ticker keeps a failed ``info`` fetch as done, so asking the same
     one again reads an empty profile.
+
+    NOTE (#238 真端到端): a *global* Yahoo rate-limit window makes every retry
+    burn ~base_delay*2**attempt seconds for nothing — the next call will also be
+    throttled. Under sustained 429 the exponential backoff was the proximate
+    cause of propagate overrunning the 600s wall (dozens of Yahoo calls × many
+    seconds each). When the rate-limit window is clearly active we fail fast so
+    the caller's fallback (e.g. klinefeed for crypto) can take over instead of
+    stalling the whole run. Set TRADINGAGENTS_YF_FAILFAST=1 to clamp retries to
+    one immediate pass (no sleep) so a throttled run degrades instead of timing
+    out.
     """
-    for attempt in range(max_retries + 1):
+    import os as _os
+    fail_fast = _os.environ.get("TRADINGAGENTS_YF_FAILFAST") == "1"
+    effective_retries = 0 if fail_fast else max_retries
+    effective_delay = 0.0 if fail_fast else base_delay
+    for attempt in range(effective_retries + 1):
         try:
             return func()
         except YFRateLimitError as exc:
-            if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
-                logger.warning(f"Yahoo Finance rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
+            if attempt < effective_retries:
+                delay = effective_delay * (2 ** attempt)
+                logger.warning(f"Yahoo Finance rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{effective_retries})")
                 time.sleep(delay)
             else:
                 raise VendorUnavailableError(
-                    f"Yahoo Finance rate limited after {max_retries} retries: {exc}"
+                    f"Yahoo Finance rate limited after {effective_retries} retries: {exc}"
                 ) from exc
         except Exception as exc:
             if _answered_empty(exc):

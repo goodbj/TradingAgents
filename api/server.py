@@ -196,7 +196,7 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
 # 脑 propagate 整体超时（秒）：满链路十几轮串行 LLM 调用，若后端代理卡死
 # 会无限挂起，导致 01 侧轮询永远拿不到 done。给一个上限，超时即标记 failed
 # 并写明原因，让 01 侧能拿到明确失败而非永远 processing（兜底，根因在代理侧）。
-PROPAGATE_TIMEOUT_SECONDS = float(os.getenv("TA_BRAIN_PROPAGATE_TIMEOUT", "600"))
+PROPAGATE_TIMEOUT_SECONDS = float(os.getenv("TA_BRAIN_PROPAGATE_TIMEOUT", "900"))
 
 
 def _run_task(task_id: str, request: IngestRequest) -> None:
