@@ -203,6 +203,18 @@ def no_data_available(error: NoMarketDataError) -> str:
 
 def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
+    # Dual-interface switch (Issue #238): under auto/crypto backend mode, crypto
+    # symbols skip Yahoo's equity-only endpoints (no balance sheet for BTC) so a
+    # crypto run never triggers Yahoo's data-center IP rate-limit storm. The
+    # first positional arg is the ticker/symbol.
+    from tradingagents.dataflows.vendors.backend_switch import (
+        no_data_available_for_crypto,
+        should_skip_yahoo_for_crypto,
+    )
+    symbol = args[0] if args else kwargs.get("symbol", "")
+    if should_skip_yahoo_for_crypto(method, symbol):
+        return no_data_available_for_crypto(method, symbol)
+
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
