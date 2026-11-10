@@ -40,6 +40,7 @@ from tradingagents.dataflows.vendors.yahoo.market import (
 from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
 from tradingagents.dataflows.vendors.klinefeed import (
     get_YFin_data_online as get_klinefeed_stock_data,
+    get_klinefeed_indicators,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ VENDOR_METHODS = {
     # technical_indicators
     "get_indicators": {
         "alpha_vantage": get_alpha_vantage_indicator,
+        "klinefeed": get_klinefeed_indicators,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data

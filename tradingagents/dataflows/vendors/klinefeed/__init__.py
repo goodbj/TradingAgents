@@ -5,11 +5,20 @@ Replaces Yahoo Finance for crypto via a three-tier fallback chain
 the ``source``-annotation mechanism.
 """
 
-from tradingagents.dataflows.vendors.klinefeed.indicators import compute_momentum_score
+from tradingagents.dataflows.vendors.klinefeed.indicators import (
+    compute_momentum_score,
+    get_klinefeed_indicators,
+)
 from tradingagents.dataflows.vendors.klinefeed.ohlcv import (
     get_YFin_data_online,
     get_last_source,
     load_ohlcv,
 )
 
-__all__ = ["get_YFin_data_online", "get_last_source", "load_ohlcv", "compute_momentum_score"]
+__all__ = [
+    "get_YFin_data_online",
+    "get_last_source",
+    "load_ohlcv",
+    "compute_momentum_score",
+    "get_klinefeed_indicators",
+]

@@ -30,7 +30,16 @@ from __future__ import annotations
 
 import os
 
-# Methods that only make sense for equities (Yahoo-exclusive, no crypto analogue).
+# Symbol-scoped methods whose *first positional arg is the ticker* and which only
+# make sense for equities (Yahoo-exclusive, no crypto analogue). For crypto these
+# are short-circuited to NO_DATA so a crypto run never calls Yahoo and triggers
+# its data-center IP rate-limit storm (#238). Crypto indicators are NOT here: they
+# route to the klinefeed-computed implementation (real OHLCV) instead, so the
+# analyst still gets RSI/MACD without touching Yahoo.
+#
+# NOTE: ``get_global_news`` is deliberately excluded — its first positional arg is
+# a *date*, not a symbol, so the crypto short-circuit (which keys on the ticker)
+# cannot and should not apply; its Yahoo throttling is handled by fail-fast.
 _YAHOO_EQUITY_ONLY_METHODS = frozenset({
     "get_fundamentals",
     "get_balance_sheet",
@@ -38,7 +47,6 @@ _YAHOO_EQUITY_ONLY_METHODS = frozenset({
     "get_income_statement",
     "get_insider_transactions",
     "get_news",
-    "get_global_news",
 })
 
 

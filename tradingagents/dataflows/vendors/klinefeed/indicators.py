@@ -12,10 +12,12 @@ computed with plain pandas so the brain keeps its dependency surface.
 
 from __future__ import annotations
 
+import json
 import logging
 
 import pandas as pd
 
+from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.vendors.klinefeed.ohlcv import load_ohlcv
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,81 @@ def _recent_return(close: pd.Series, window: int = 20) -> float | None:
 
 def _clip01(x: float) -> float:
     return max(0.0, min(1.0, x))
+
+
+def get_klinefeed_indicators(
+    symbol: str,
+    indicator: str,
+    as_of_date: str,
+    look_back_days: int = 30,
+) -> str:
+    """Technical indicators for a crypto symbol, computed from klinefeed OHLCV.
+
+    Drop-in for the yahoo ``get_stock_stats_indicators_window``: same signature and
+    a JSON ``{date, <indicator>: [...]}`` shape, so the router can route crypto's
+    ``get_indicators`` here and never touch Yahoo's rate-limited yfinance path
+    (#238). Returns the same JSON the yahoo vendor emits so downstream prompts are
+    unchanged.
+    """
+    try:
+        df = load_ohlcv(symbol, as_of_date)
+    except Exception as exc:
+        raise VendorUnavailableError(f"klinefeed OHLCV unavailable for {symbol}: {exc}") from exc
+    if df is None or df.empty or "Close" not in df.columns:
+        raise NoMarketDataError(symbol, symbol, "no OHLCV from klinefeed")
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+    df = df[df["Date"] <= pd.to_datetime(as_of_date)].sort_values("Date")
+    if len(df) > look_back_days:
+        df = df.tail(look_back_days)
+    if df.empty:
+        raise NoMarketDataError(symbol, symbol, f"no OHLCV on/before {as_of_date}")
+
+    close = df["Close"].astype(float)
+    out: dict[str, list] = {"date": df["Date"].dt.strftime("%Y-%m-%d").tolist()}
+
+    def _sma(n: int) -> list:
+        return close.rolling(n).mean().round(4).tolist()
+
+    def _ema(n: int) -> list:
+        return close.ewm(span=n, adjust=False).mean().round(4).tolist()
+
+    def _rsi(n: int = 14) -> list:
+        delta = close.diff()
+        gain = delta.clip(lower=0).rolling(n).mean()
+        loss = (-delta.clip(upper=0)).rolling(n).mean()
+        rs = gain / loss.replace(0, pd.NA)
+        return (100 - 100 / (1 + rs)).round(4).tolist()
+
+    def _macd(fast: int = 12, slow: int = 26, sig: int = 9):
+        ema_f = close.ewm(span=fast, adjust=False).mean()
+        ema_s = close.ewm(span=slow, adjust=False).mean()
+        macd_line = (ema_f - ema_s).round(4)
+        signal = macd_line.ewm(span=sig, adjust=False).mean().round(4)
+        hist = (macd_line - signal).round(4)
+        return macd_line.tolist(), signal.tolist(), hist.tolist()
+
+    def _boll(n: int = 20, k: int = 2):
+        mid = close.rolling(n).mean().round(4)
+        sd = close.rolling(n).std(ddof=0).round(4)
+        return mid.tolist(), (mid + k * sd).round(4).tolist(), (mid - k * sd).round(4).tolist()
+
+    catalog = {
+        "close_10_ema": _ema(10),
+        "close_50_sma": _sma(50),
+        "close_200_sma": _sma(200),
+        "macd": _macd()[0],
+        "macds": _macd()[1],
+        "macdh": _macd()[2],
+        "rsi": _rsi(),
+        "boll": _boll()[0],
+        "boll_ub": _boll()[1],
+        "boll_lb": _boll()[2],
+    }
+    if indicator not in catalog:
+        raise NoMarketDataError(symbol, symbol, f"indicator {indicator} not supported by klinefeed vendor")
+    out[indicator] = catalog[indicator]
+    return json.dumps(out, ensure_ascii=False, indent=2)
 
 
 def compute_momentum_score(symbol: str, as_of_date: str) -> float | None:
