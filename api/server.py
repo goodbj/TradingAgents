@@ -59,12 +59,12 @@ def _get_brain() -> TradingAgentsGraph:
             # 集团网络服务代理 (03 主管) 提供的路由组模型，两 tier 都用它
             config["deep_think_llm"] = "group/never-stuck"
             config["quick_think_llm"] = "group/never-stuck"
-            # 走集团网络服务代理 (03 主管) 出 LLM
+            # 走集团网络服务代理 (03 主管) 出 LLM；ANTHROPIC_API_KEY 由部署
+            # 环境注入（.env / 容器 env_file），源码不写任何凭据。SDK 自动
+            # 从环境变量读取；缺 key 时初始化明确报错，不静默降级。
             config["backend_url"] = "http://127.0.0.1:3425"
             config["deep_think_backend_url"] = "http://127.0.0.1:3425"
             config["quick_think_backend_url"] = "http://127.0.0.1:3425"
-            # 代理要求的 key（网关认这个）
-            os.environ.setdefault("ANTHROPIC_API_KEY", "sk-magpie-key-2f4310a2456eb2bb8aa4808875adc95a401488f116164d94")
             # 满链路十几轮串行 LLM，集团代理(3425)偶发 503/429 会一击毙命整个
             # propagate。SDK 自带 max_retries 对 429 生效，拉高预算扛突发限流；
             # 5xx 间歇性失败由上游(03代理)保证，脑侧只加预算不改协议。
@@ -135,12 +135,14 @@ def _build_data_source(final_state: dict[str, Any], request: IngestRequest, task
     overall = round(sum(filled) / max(len(reports), 1), 2)
 
     # recommendation：优先读脑侧枚举值，降级才用关键词
+    # final_decision 无论走哪条分支都要先取，rationale 兜底会用它（防
+    # UnboundLocalError 把 done 任务直接打成 failed，Issue #294）。
+    final_decision = _txt(final_state.get("final_trade_decision"))
     recommendation_enum = final_state.get("recommendation_enum")
     if recommendation_enum in ("strong_watch", "watch", "avoid"):
         recommendation = recommendation_enum
     else:
         # 降级：从 final_trade_decision 文案里猜
-        final_decision = _txt(final_state.get("final_trade_decision"))
         decision_lower = final_decision.lower()
         if "sell" in decision_lower or "underweight" in decision_lower:
             recommendation = "avoid"
@@ -242,8 +244,8 @@ def _run_task(task_id: str, request: IngestRequest) -> None:
         with _TASKS_LOCK:
             _TASKS[task_id].update({"status": "done", "data_source": data_source, "finished_at": _now()})
 
-        # 可选：主动回调 01 接收接口（契约 §1 异步模式：外层包 task 元信息，
-        # 头带 X-TA-Token 防伪造，3 次指数退避 2s/4s/8s；失败不阻塞 done）
+        # 可选：主动回调 01 接收接口（契约 §4：外层包 task 元信息，
+        # 头带 X-TA-Token 防伪造，0s/2s/4s/8s 退避；失败不阻塞 done）
         if request.callback_url:
             _notify_callback(task_id, request, data_source)
     except Exception as exc:
@@ -266,8 +268,9 @@ def _notify_callback(
     外层结构：{task_id, request_id, status, finished_at, data_source}；
     失败时 status=failed 且带 error、无 data_source。请求头 X-TA-Token
     取环境变量 TA_BRAIN_CALLBACK_TOKEN（两边约定同一值；未设置则不发，
-    01 侧"不带 token 不拒绝"）。重试 3 次指数退避 2s/4s/8s，全部失败只
-    写 callback_error，不阻塞任务状态（done 已落）。
+    01 侧"不带 token 不拒绝"）。共 4 次投递（0s/2s/4s/8s 退避），只对
+    5xx/网络错误重试，4xx 不再投；全部失败只写 callback_error，不阻塞任务
+    状态（done 已落）。
     """
     payload = {
         "task_id": task_id,
@@ -296,8 +299,8 @@ def _notify_callback(
             pass  # 网络错误继续退避重试
     with _TASKS_LOCK:
         _TASKS[task_id]["callback_error"] = (
-            f"callback to {request.callback_url} failed after 3 retries "
-            f"(attempts at 0s/2s/4s/8s backoff)"
+            f"callback to {request.callback_url} failed after 4 attempts "
+            f"(0s/2s/4s/8s backoff)"
         )
 
 
@@ -341,6 +344,7 @@ def get_task(task_id: str):
             "finished_at": task.get("finished_at"),
             "data_source": task.get("data_source"),
             "error": task.get("error"),
+            "callback_error": task.get("callback_error"),
         }
 
 

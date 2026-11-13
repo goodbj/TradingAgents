@@ -41,7 +41,7 @@ Content-Type: application/json
 | `asset_type` | string | 否 | `crypto`（默认）/ `stock` |
 | `trade_date` | string | 否 | `YYYY-MM-DD`，默认今天 |
 | `portfolio` | object | 否 | 01 当前持仓，让脑针对实际仓位分析 |
-| `callback_url` | string | 否 | 02 算完后主动回调 01 接收接口（异步模式） |
+| `callback_url` | string | 否 | 02 算完后主动回调 01 接收接口（异步模式，结构见 §4；生产必配） |
 | `request_id` | string | 否 | 01 侧幂等/追踪 ID |
 
 **响应**：
@@ -54,7 +54,7 @@ Content-Type: application/json
 ```
 GET /api/v1/symbols/{symbol}/analysis?trade_date=YYYY-MM-DD&request_id=
 ```
-或异步轮询：
+同步调试端点（阻塞跑脑，约 4~10 分钟，生产禁用）；或异步轮询：
 ```
 GET /api/v1/tasks/{task_id}
 ```
@@ -66,8 +66,8 @@ GET /api/v1/tasks/{task_id}
   "task_id": "ta-xxxx",
   "symbol": "BTC-USD",
   "analysis_date": "2026-11-07",
-  "source": "tradingagents_v0.7.1",
-  "point_in_time_checked": true,
+  "source": "tradingagents_v0.7.1:klinefeed",
+  "point_in_time_checked": false,
   "reports": {
     "fundamentals": "...",
     "market": "...",
@@ -79,8 +79,8 @@ GET /api/v1/tasks/{task_id}
     "risk_conservative": "...", "risk_aggressive": "...", "risk_neutral": "..."
   },
   "scores": {
-    "overall": 0.72, "momentum": 0.80, "sentiment": 0.65,
-    "fundamental": 0.60, "risk_level": "medium"
+    "overall": 1.0, "momentum": 0.35, "sentiment": 1,
+    "fundamental": 1, "risk_level": "medium"
   },
   "recommendation": "watch",
   "final_rating": "Hold",
@@ -88,7 +88,13 @@ GET /api/v1/tasks/{task_id}
 }
 ```
 
-> **注**：`momentum`/`sentiment`/`fundamental` 维度当前为启发式估算（基于 report 长度），仅供参考；`overall` 为报告填充率。若脑侧后续实现真实评分逻辑，将以脑侧输出为准。
+> **注**：`scores` 口径以脑侧实现为准（2026-11-13 追平，Issue #294）：
+> - `overall`：四份报告填充率（0..1）；
+> - `momentum`：**klinefeed 真实 OHLCV 算的 RSI + 20-bar 近期收益率加权**（#238 第 3 件），取不到 K 线时为 `null`（诚实空缺，不塞假信）；
+> - `sentiment` / `fundamental`：框架暂无独立量化器，用「报告是否实质产出」的 `1/0` 占位标记，**不数报告长度**；后续接真实量化器再替换；
+> - `risk_level`：当前固定 `medium`。
+> `source` 字段按 §3.5 标注真实 K 线数据源（`tradingagents_v0.7.1:klinefeed` / `:binance_direct` / `:yahoo_fallback`）。
+> `point_in_time_checked` 读脑侧 PIT 校验结果，未校验为 `false`。
 
 ## 3. 数据源接口（02 脑调用，01 提供）【2026-11-08 增补，裁决1 授权】
 
@@ -138,6 +144,54 @@ GET /v1/meta
 ### 3.6 SLA 与可用性
 - 01 保证 klinefeed 在 01 侧服务窗口内可用；02 不得因 klinefeed 失联而拒绝 ingest 任务（走 §3.5 降级）
 - 数据新鲜度：`last_sync_at` 超 2 个 bar 周期视为陈旧，02 侧可降级直连
+
+## 4. 异步任务与 callback 规范（2026-11-10 终验实装 · 2026-11-13 补章，Issue #294）
+
+> `POST /ingest` 立即返 `task_id`（`queued`），脑在后台跑 `propagate`（满链路多轮 LLM，实测约 4~10 分钟）。01 侧**生产必须走异步**：`callback_url` 主动回调 + `/tasks/{task_id}` 轮询兜底；`GET /symbols/{symbol}/analysis` 是同步跑脑的调试端点，5s 内不会返回，别拿超时误判脑挂了。
+
+### 4.1 任务状态
+- `queued` → `processing` → `done` / `failed`；`failed` 时 `/tasks` 返回 `error` 原因。
+- 整体超时：环境变量 `TA_BRAIN_PROPAGATE_TIMEOUT`（默认 **900s**），超时标 `failed` 并写明原因，防任务永远 `processing`（根因多为上游 LLM 代理卡死/限流）。
+- `/tasks/{task_id}` 响应字段：`{task_id, status, received_at, finished_at, data_source, error, callback_error}`；回调最终失败时 `callback_error` 非空，**不阻塞 `done`**。
+
+### 4.2 成功回调（02 → 01）
+```
+POST {callback_url}
+Content-Type: application/json
+X-TA-Token: <TA_BRAIN_CALLBACK_TOKEN>   # 未配置环境变量时省略该头
+```
+外层结构（`data_source` 即 §2 完整对象，**不再裸推**）：
+```json
+{
+  "task_id": "ta-xxxx",
+  "request_id": "dig-20261107-btc-001",
+  "status": "done",
+  "finished_at": "2026-11-10T11:29:14+00:00",
+  "data_source": { "...": "§2 币种数据源" }
+}
+```
+
+### 4.3 失败回调
+脑任务失败（异常/超时）也回调，让 01 侧立即感知并降级：
+```json
+{
+  "task_id": "ta-xxxx",
+  "request_id": "dig-20261107-btc-001",
+  "status": "failed",
+  "finished_at": "...",
+  "error": "propagate exceeded 900s ..."
+}
+```
+失败时**无 `data_source`**，带 `error`。
+
+### 4.4 重试与鉴权
+- 共 **4 次投递**（0s / 2s / 4s / 8s 退避），单次超时 30s；只对 **5xx / 网络错误** 重试，`2xx`/`4xx` 视为投递终结不再重投。
+- 全部失败 → `/tasks` 的 `callback_error` 写明目标 URL + 尝试次数，`status` 保持 `done`/`failed` 不变。
+- `X-TA-Token` 取 02 侧环境变量 `TA_BRAIN_CALLBACK_TOKEN`（两边约定同一值）；未配置则不带头，01 侧「不带 token 不拒绝」。
+
+### 4.5 时间 / 端口口径
+- 所有时间戳 **UTC ISO-8601**（见下方「时区冻结」）；`trade_date` 一律 UTC 日期。
+- 02 脑服务两路并存：裸跑 `:8011`（`TA_BRAIN_PORT` 默认）、本地 Docker 容器 `:8000`（compose `brain` profile）。`callback_url` 由 01 侧按实际部署填，不许硬编码。
 
 ## 枚举冻结
 

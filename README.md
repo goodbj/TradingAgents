@@ -400,6 +400,33 @@ What does not vary anymore: the analyzed company identity is resolved determinis
 
 Backtest results are not guaranteed to match any published figure. Returns depend on the model, the temperature, the date range, data quality, and the sampling above. Treat the framework as a research scaffold for studying multi-agent analysis, not as a strategy with a fixed, replicable return.
 
+## TA Brain service (02-TA ↔ 01-Digger integration)
+
+The brain service (`api/server.py`) exposes the contract in `api/CONTRACT.md`:
+`POST /api/v1/ingest` (async), `GET /api/v1/tasks/{task_id}`,
+`GET /api/v1/symbols/{symbol}/analysis` (blocking debug endpoint), `GET /healthz`.
+
+```bash
+# bare-metal (default port 8011)
+TA_BRAIN_PORT=8011 python -m api.server
+
+# local docker (compose brain profile, port 8000) —— 重建/重启属重操作，须老泡儿点头
+docker compose --profile brain up --build -d
+
+# contract regression tests (no LLM / no network)
+python -m pytest tests/test_brain_contract.py -q
+
+# drift check: branch vs container worktree vs 01-Digger contract copies
+python scripts/check_brain_contract_sync.py
+```
+
+⚠ The docker compose `brain` profile bind-mounts `./api` from the container
+worktree (`E:/AI/orca-worktrees/02_TA/TradingAgents/api`). That copy has drifted
+from this branch's tracked `api/server.py` (Issue #294): a running container may
+serve the older code. Keep both copies in sync before any joint debugging; do
+not hard-code `localhost` on the 01 side. Contract changes are picked up by
+01_00 (no cross-repo writes by 02).
+
 ## Contributing
 
 Contributions are welcome: bug fixes, documentation, and feature ideas; past contributions are credited per release in [`CHANGELOG.md`](CHANGELOG.md).
