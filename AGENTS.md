@@ -96,6 +96,7 @@ orca worktree set --worktree "id:784e2282-99a8-440a-a674-04d9468fd712::E:/AI/orc
 - **任务唯一真源 = GitHub Issues**（本仓 `goodbj/TradingAgents`）：老泡儿提需求发 Issue，智能体发现 bug 发 Issue，正文首行写「发现人：<智能体ID>」。
 - **被问"任务列表里的活"时**：第一反应 `gh issue list --repo goodbj/AI_Memory --state open --label "部门-02 TA"`，**不是翻编排信箱/worktree**。详见能力内核 ⑦.5（2026-11-05 06_00 翻车钉死）。
 - **全员远端只读**：允许 `git fetch` / `git log` / `git status -sb`；禁止 `git push` / `pull` / `merge` / 碰别人 worktree。判「未推送」只看 `git log --oneline origin/main..main` 实际列表，不凭本地 HEAD 猜。
+- **建单必带验收人（机器牙齿，老泡儿 2026-11-13 拍板红线）**：任何 `gh issue create` 不论谁建、哪个脚本建，**必须 `--label` 挂验收人标签**，不明一律挂 `验收-00_01`；本部门自建单挂 `验收-本部门`。验收人标签缺失的单视为「不合规单」——建立即补、零缺口为常态（详见 Issue #313 集团整改）。
 - **部署/重启服务端必须经老泡儿同意**：本地改代码、跑测试、commit 默认模式；同步到服务器 + 重建 + 重启须单独授权。
 - **开工双动作**：`git fetch origin && git log --oneline -20 origin/main` 看清远端 + `run-use` 认领协调信道。
 
